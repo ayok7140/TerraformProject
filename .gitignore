@@ -22,3 +22,5 @@ crash.*.log
 .venv/
 .idea/
 .vscode/
+
+.idea/
