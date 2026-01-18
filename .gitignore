@@ -1,0 +1,24 @@
+# Terraform working directory
+.terraform/
+**/.terraform/*
+
+# State files
+*.tfstate
+*.tfstate.*
+terraform.tfstate.d/
+
+# Crash logs
+crash.log
+crash.*.log
+
+# Variable files (often sensitive)
+*.tfvars
+*.tfvars.json
+
+# Lock file (keep it tracked usually; comment out if you want to commit it)
+# .terraform.lock.hcl
+
+# IDE / env
+.venv/
+.idea/
+.vscode/

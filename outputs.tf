@@ -1,0 +1,20 @@
+output "bucket_name" {
+  value = aws_s3_bucket.core_demo.bucket
+}
+
+output "vpc_id" {
+  value = module.network.vpc_id
+}
+
+output "public_subnet_ids" {
+  value = module.network.public_subnet_ids
+}
+
+output "private_subnet_ids" {
+  value = module.network.private_subnet_ids
+}
+
+# compute resource output
+output "alb_dns_name" {
+  value = module.compute.alb_dns_name
+}
