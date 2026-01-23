@@ -1,0 +1,43 @@
+name: Terraform Drift Detection
+
+on:
+  schedule:
+    - cron: "0 9 * * *"   # daily at 09:00 UTC
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  drift-dev:
+    name: Drift Check (dev)
+    runs-on: ubuntu-latest
+    environment: dev
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6.6"
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Init
+        run: terraform init -input=false
+
+      - name: Drift plan (exitcode)
+        run: |
+          terraform plan -input=false -var-file="env/dev.tfvars" -detailed-exitcode
+        continue-on-error: true
+
+      - name: Fail if drift detected
+        run: |
+          # detailed-exitcode: 0=no changes, 2=changes, 1=error
+          # GitHub marks previous step as failure if exit 1, but we used continue-on-error.
+          # Check the previous step outcome by re-running with a controlled check:
+          terraform plan -input=false -var-file="env/dev.tfvars" -detailed-exitcode
