@@ -2,7 +2,7 @@ name: Terraform Plan (PR)
 
 on:
   pull_request:
-    branches: [ "main" ]
+    branches: ["main"]
     paths:
       - "**/*.tf"
       - "env/*.tfvars"
@@ -27,6 +27,35 @@ jobs:
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.6.6"
+
+      # Guard: ensure required GitHub Environment vars exist (dev)
+      - name: Guard — ensure required env vars exist
+        shell: bash
+        run: |
+          echo "AWS_REGION=${{ vars.AWS_REGION }}"
+          echo "AWS_ROLE_ARN=${{ vars.AWS_ROLE_ARN }}"
+          test -n "${{ vars.AWS_REGION }}" || (echo "❌ Missing AWS_REGION in GitHub Environment: dev" && exit 1)
+          test -n "${{ vars.AWS_ROLE_ARN }}" || (echo "❌ Missing AWS_ROLE_ARN in GitHub Environment: dev" && exit 1)
+
+      # Guard: ensure tfvars file exists and contains required keys (dev)
+      - name: Guard — ensure env/dev.tfvars exists
+        shell: bash
+        run: |
+          test -f "env/dev.tfvars" || (echo "❌ Missing env/dev.tfvars" && exit 1)
+          echo "✅ env/dev.tfvars found"
+
+      - name: Guard — ensure required keys exist in env/dev.tfvars
+        shell: bash
+        run: |
+          # Only check keys that truly must be present (adjust if you add defaults in variables.tf)
+          required_keys=(bucket_name region vpc_cidr public_subnet_cidrs private_subnet_cidrs azs instance_type desired_capacity min_size max_size)
+          for k in "${required_keys[@]}"; do
+            if ! grep -Eq "^[[:space:]]*${k}[[:space:]]*=" "env/dev.tfvars"; then
+              echo "❌ Missing '${k}=' in env/dev.tfvars"
+              exit 1
+            fi
+          done
+          echo "✅ Required keys present in env/dev.tfvars"
 
       - name: Configure AWS (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -56,5 +85,17 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: "Terraform plan (dev) completed successfully."
+              body: "✅ Terraform plan (dev) completed successfully."
+            })
+
+      - name: PR comment (failure)
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: "❌ Terraform plan (dev) failed. Open the Actions logs to see which guard/step failed."
             })
