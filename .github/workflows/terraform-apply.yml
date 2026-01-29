@@ -7,18 +7,11 @@ on:
         description: "Which environment to apply?"
         type: choice
         required: true
-        options:
-          - dev
-          - stage
-          - prod
+        options: [dev, stage, prod]
 
 permissions:
   id-token: write
   contents: read
-
-concurrency:
-  group: terraform-apply-${{ inputs.environment }}
-  cancel-in-progress: false
 
 jobs:
   apply:
@@ -26,14 +19,31 @@ jobs:
     runs-on: ubuntu-latest
     environment: ${{ inputs.environment }}
 
+    concurrency:
+      group: terraform-apply-${{ inputs.environment }}
+      cancel-in-progress: false
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: "Guard: only main can deploy to stage/prod"
+        if: ${{ inputs.environment != 'dev' && github.ref != 'refs/heads/main' }}
+        run: |
+          echo "Only main branch can deploy to stage/prod."
+          exit 1
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.6.6"
+
+      - name: Guard - ensure env vars exist
+        run: |
+          echo "AWS_REGION=${{ vars.AWS_REGION }}"
+          echo "AWS_ROLE_ARN=${{ vars.AWS_ROLE_ARN }}"
+          test -n "${{ vars.AWS_REGION }}" || (echo "Missing AWS_REGION in this environment" && exit 1)
+          test -n "${{ vars.AWS_ROLE_ARN }}" || (echo "Missing AWS_ROLE_ARN in this environment" && exit 1)
 
       - name: Configure AWS (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -44,9 +54,12 @@ jobs:
       - name: Terraform init
         run: terraform init -input=false
 
-      - name: Terraform plan
+      - name: Select workspace
         run: |
-          terraform plan -input=false -var-file="env/${{ inputs.environment }}.tfvars" -out=tfplan
+          terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }}
+
+      - name: Terraform plan
+        run: terraform plan -input=false -var-file="env/${{ inputs.environment }}.tfvars" -out=tfplan
 
       - name: Terraform apply
-        run: terraform apply -input=false -auto-approve tfplan
+        run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
