@@ -16,28 +16,66 @@ jobs:
     environment: dev
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: hashicorp/setup-terraform@v3
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: "1.6.6"
 
-      - uses: aws-actions/configure-aws-credentials@v4
+      # Guard — make sure the GitHub Environment variables exist
+      - name: Guard — ensure required env vars exist (dev)
+        shell: bash
+        run: |
+          echo "AWS_REGION=${{ vars.AWS_REGION }}"
+          echo "AWS_ROLE_ARN=${{ vars.AWS_ROLE_ARN }}"
+          test -n "${{ vars.AWS_REGION }}" || (echo "❌ Missing AWS_REGION in GitHub Environment: dev" && exit 1)
+          test -n "${{ vars.AWS_ROLE_ARN }}" || (echo "❌ Missing AWS_ROLE_ARN in GitHub Environment: dev" && exit 1)
+
+      # Guard — ensure tfvars file exists
+      - name: Guard — ensure env/dev.tfvars exists
+        shell: bash
+        run: |
+          test -f "env/dev.tfvars" || (echo "❌ Missing env/dev.tfvars" && exit 1)
+          echo "✅ env/dev.tfvars found"
+
+      - name: Configure AWS (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Init
+      - name: Terraform init
         run: terraform init -input=false
 
-      - name: Drift plan (exitcode)
-        run: |
-          terraform plan -input=false -var-file="env/dev.tfvars" -detailed-exitcode
-        continue-on-error: true
+      # If you use workspaces, this is critical (dev/stage/prod separation)
+      - name: Select workspace (dev)
+        run: terraform workspace select dev || terraform workspace new dev
 
-      - name: Fail if drift detected
+      # Drift check using detailed-exitcode
+      # 0 = no changes, 2 = drift/changes, 1 = error
+      - name: Drift plan (dev) — capture exit code
+        shell: bash
         run: |
-          # detailed-exitcode: 0=no changes, 2=changes, 1=error
-          # GitHub marks previous step as failure if exit 1, but we used continue-on-error.
-          # Check the previous step outcome by re-running with a controlled check:
-          terraform plan -input=false -var-file="env/dev.tfvars" -detailed-exitcode
+          set +e
+          terraform plan -input=false -var-file="env/dev.tfvars" -detailed-exitcode -no-color
+          code=$?
+          echo "TF_PLAN_EXITCODE=$code" >> $GITHUB_ENV
+          echo "Terraform plan exit code: $code"
+          exit 0
+
+      - name: Fail if drift detected (dev)
+        shell: bash
+        run: |
+          echo "Terraform plan exit code was: $TF_PLAN_EXITCODE"
+          if [ "$TF_PLAN_EXITCODE" = "2" ]; then
+            echo "❌ Drift detected in dev!"
+            exit 1
+          elif [ "$TF_PLAN_EXITCODE" = "0" ]; then
+            echo "✅ No drift detected in dev."
+            exit 0
+          else
+            echo "❌ Terraform error during drift plan (exit code: $TF_PLAN_EXITCODE)"
+            exit 1
+          fi
