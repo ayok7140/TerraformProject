@@ -1,20 +1,16 @@
 name: Terraform Apply (Controlled)
 
 on:
-  # Auto deploys
-  push:
-    branches:
-      - dev
-      - main
-
-  # Manual deploys
   workflow_dispatch:
     inputs:
       environment:
         description: "Which environment to apply?"
         type: choice
         required: true
-        options: [dev, stage, prod]
+        options:
+          - dev
+          - stage
+          - prod
 
 permissions:
   id-token: write
@@ -22,42 +18,20 @@ permissions:
 
 jobs:
   apply:
-    name: Apply (${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'dev' && 'dev' || 'stage') }})
+    name: Apply (${{ inputs.environment }})
     runs-on: ubuntu-latest
-
-    # Decide the target environment:
-    # - Manual: use inputs.environment
-    # - Auto: dev branch -> dev, main branch -> stage
-    environment: ${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'dev' && 'dev' || 'stage') }}
+    environment: ${{ inputs.environment }}
 
     concurrency:
-      group: terraform-apply-${{ github.event_name == 'workflow_dispatch' && inputs.environment || (github.ref_name == 'dev' && 'dev' || 'stage') }}
+      group: terraform-apply-${{ inputs.environment }}
       cancel-in-progress: false
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Determine environment once and reuse everywhere
-      - name: Set target environment
-        id: env
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            ENV="${{ inputs.environment }}"
-          else
-            if [ "${{ github.ref_name }}" = "dev" ]; then
-              ENV="dev"
-            else
-              ENV="stage"
-            fi
-          fi
-          echo "env=$ENV" >> "$GITHUB_OUTPUT"
-          echo "Target environment is: $ENV"
-
-      # Guard: only main can deploy to stage/prod (manual safety)
-      - name: "Guard: only main can deploy to stage/"prod"
-        if: ${{ steps.env.outputs.env != 'dev' && github.ref != 'refs/heads/main' }}
+      - name: Guard - only main can deploy to stage/prod
+        if: ${{ inputs.environment != 'dev' && github.ref != 'refs/heads/main' }}
         run: |
           echo "Only main branch can deploy to stage/prod."
           exit 1
@@ -70,10 +44,8 @@ jobs:
       - name: Guard - ensure env vars exist
         shell: bash
         run: |
-          echo "AWS_REGION=${{ vars.AWS_REGION }}"
-          echo "AWS_ROLE_ARN=${{ vars.AWS_ROLE_ARN }}"
-          test -n "${{ vars.AWS_REGION }}" || (echo "Missing AWS_REGION in this environment" && exit 1)
-          test -n "${{ vars.AWS_ROLE_ARN }}" || (echo "Missing AWS_ROLE_ARN in this environment" && exit 1)
+          test -n "${{ vars.AWS_REGION }}" || (echo "Missing AWS_REGION in this GitHub Environment" && exit 1)
+          test -n "${{ vars.AWS_ROLE_ARN }}" || (echo "Missing AWS_ROLE_ARN in this GitHub Environment" && exit 1)
 
       - name: Configure AWS (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -86,15 +58,10 @@ jobs:
 
       - name: Select workspace
         run: |
-          terraform workspace select ${{ steps.env.outputs.env }} || terraform workspace new ${{ steps.env.outputs.env }}
-
-      - name: Guard — ensure tfvars exists
-        shell: bash
-        run: |
-          test -f "env/${{ steps.env.outputs.env }}.tfvars" || (echo "Missing env/${{ steps.env.outputs.env }}.tfvars" && exit 1)
+          terraform workspace select ${{ inputs.environment }} || terraform workspace new ${{ inputs.environment }}
 
       - name: Terraform plan
-        run: terraform plan -input=false -var-file="env/${{ steps.env.outputs.env }}.tfvars" -out=tfplan
+        run: terraform plan -input=false -var-file="env/${{ inputs.environment }}.tfvars" -out=tfplan
 
       - name: Terraform apply
         run: terraform apply -input=false -lock-timeout=5m -auto-approve tfplan
